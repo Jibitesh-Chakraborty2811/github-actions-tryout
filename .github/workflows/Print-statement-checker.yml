@@ -1,0 +1,186 @@
+name: File Analysis Workflow
+
+# When this workflow runs
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+# Jobs to run
+jobs:
+  analyze-files:
+    # The type of runner
+    runs-on: ubuntu-latest
+    
+    # Steps to execute
+    steps:
+    # Checkout the code
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    # Set up Python
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.9
+        
+    # Create the Python analysis script
+    - name: Create file analyzer script
+      run: |
+        cat > analyze_files.py << 'EOF'
+        import os
+        import re
+        from pathlib import Path
+
+        def count_print_statements(file_path, content):
+            """Count print statements in different file types"""
+            file_ext = Path(file_path).suffix.lower()
+            
+            # Define patterns for different languages
+            patterns = {
+                '.py': [
+                    r'\bprint\s*\(',  # Python: print(...)
+                ],
+                '.js': [
+                    r'\bconsole\.log\s*\(',  # JavaScript: console.log(...)
+                    r'\bconsole\.info\s*\(',  # JavaScript: console.info(...)
+                    r'\bconsole\.warn\s*\(',  # JavaScript: console.warn(...)
+                    r'\bconsole\.error\s*\(',  # JavaScript: console.error(...)
+                ],
+                '.java': [
+                    r'\bSystem\.out\.print\w*\s*\(',  # Java: System.out.print*(...) 
+                ],
+                '.cpp': [
+                    r'\bstd::cout\s*<<',  # C++: std::cout <<
+                    r'\bcout\s*<<',      # C++: cout <<
+                    r'\bprintf\s*\(',    # C/C++: printf(...)
+                ],
+                '.c': [
+                    r'\bprintf\s*\(',    # C: printf(...)
+                ],
+                '.go': [
+                    r'\bfmt\.Print\w*\s*\(',  # Go: fmt.Print*(...) 
+                ],
+                '.rs': [
+                    r'\bprintln!\s*\(',  # Rust: println!(...)
+                    r'\bprint!\s*\(',    # Rust: print!(...)
+                ],
+                '.php': [
+                    r'\becho\s+',        # PHP: echo
+                    r'\bprint\s+',       # PHP: print
+                    r'\bprint_r\s*\(',   # PHP: print_r(...)
+                    r'\bvar_dump\s*\(',  # PHP: var_dump(...)
+                ],
+                '.rb': [
+                    r'\bputs\s+',        # Ruby: puts
+                    r'\bprint\s+',       # Ruby: print
+                    r'\bp\s+',           # Ruby: p
+                ],
+                '.swift': [
+                    r'\bprint\s*\(',     # Swift: print(...)
+                ],
+                '.kt': [
+                    r'\bprintln\s*\(',   # Kotlin: println(...)
+                    r'\bprint\s*\(',     # Kotlin: print(...)
+                ]
+            }
+            
+            # Get patterns for this file type
+            file_patterns = patterns.get(file_ext, [])
+            if not file_patterns:
+                return 0
+            
+            total_count = 0
+            for pattern in file_patterns:
+                matches = re.findall(pattern, content, re.IGNORECASE | re.MULTILINE)
+                total_count += len(matches)
+            
+            return total_count
+
+        def analyze_repository():
+            """Analyze all files in the repository"""
+            print("🔍 Analyzing files for print statements...")
+            print("=" * 60)
+            
+            # File extensions to analyze
+            code_extensions = {'.py', '.js', '.java', '.cpp', '.c', '.go', '.rs', '.php', '.rb', '.swift', '.kt', '.ts', '.jsx', '.tsx'}
+            
+            results = []
+            total_files = 0
+            total_prints = 0
+            
+            # Walk through all files
+            for root, dirs, files in os.walk('.'):
+                # Skip .git and other hidden directories
+                dirs[:] = [d for d in dirs if not d.startswith('.')]
+                
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    file_ext = Path(file).suffix.lower()
+                    
+                    # Only analyze code files
+                    if file_ext in code_extensions:
+                        try:
+                            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                content = f.read()
+                            
+                            print_count = count_print_statements(file_path, content)
+                            
+                            results.append({
+                                'file': file_path,
+                                'extension': file_ext,
+                                'prints': print_count
+                            })
+                            
+                            total_files += 1
+                            total_prints += print_count
+                            
+                        except Exception as e:
+                            print(f"⚠️  Error reading {file_path}: {e}")
+            
+            # Sort results by print count (descending) then by filename
+            results.sort(key=lambda x: (-x['prints'], x['file']))
+            
+            # Display results
+            if results:
+                print(f"📊 Found {total_files} code files")
+                print(f"🖨️  Total print statements: {total_prints}")
+                print("\n📋 File Analysis Results:")
+                print("-" * 60)
+                
+                for result in results:
+                    status = "🔥" if result['prints'] > 5 else "✅" if result['prints'] > 0 else "⚪"
+                    print(f"{status} {result['file']:<40} | {result['extension']:<6} | {result['prints']:>3} prints")
+                
+                if total_prints > 0:
+                    print(f"\n🎯 Files with most print statements:")
+                    top_files = [r for r in results if r['prints'] > 0][:5]
+                    for i, result in enumerate(top_files, 1):
+                        print(f"   {i}. {result['file']} ({result['prints']} prints)")
+            else:
+                print("ℹ️  No code files found to analyze")
+
+        if __name__ == "__main__":
+            analyze_repository()
+        EOF
+        
+    # Run the analysis
+    - name: Analyze files for print statements
+      run: python analyze_files.py
+      
+    # Show repository structure
+    - name: Show repository structure
+      run: |
+        echo "📁 Repository Structure:"
+        echo "======================="
+        find . -type f -not -path "./.git/*" | head -20
+        
+    # Show workflow info
+    - name: Workflow Summary
+      run: |
+        echo "🚀 Workflow completed successfully!"
+        echo "Repository: ${{ github.repository }}"
+        echo "Branch: ${{ github.ref_name }}"
+        echo "Triggered by: ${{ github.actor }}"
+        echo "Event: ${{ github.event_name }}"
